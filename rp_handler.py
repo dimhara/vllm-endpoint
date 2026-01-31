@@ -33,11 +33,12 @@ async def init_engine():
     engine_args = AsyncEngineArgs(
         model=model_path,
         gpu_memory_utilization=float(os.environ.get("GPU_MEMORY_UTILIZATION", "0.95")),
-        max_model_len=max_model_len, # Auto-detects from config.json if None
+        # NEW: vLLM now supports "auto" to fit context to your available VRAM
+        max_model_len=os.environ.get("MAX_MODEL_LEN", "auto"), 
         dtype="auto",
+        trust_remote_code=True, # Still recommended for new architectures
         enforce_eager=False,
         max_num_seqs=256,
-        disable_log_stats=False
     )
 
     llm_engine = AsyncLLMEngine.from_engine_args(engine_args)

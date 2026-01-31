@@ -7,7 +7,6 @@ from cryptography.fernet import Fernet
 # MOCK ENV
 os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 # Ensure MODELS is set or models exist in /models
-os.environ["MODELS"] = "facebook/opt-125m" 
 os.environ["GPU_MEMORY_UTILIZATION"] = "0.90"
 
 try:
