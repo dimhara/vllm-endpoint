@@ -20,29 +20,41 @@ async def init_engine():
 
     print("--- 🚀 Initializing vLLM Engine ---")
     
-    # 1. Prepare Model Path
     model_dir = os.environ.get("MODEL_DIR", "/models")
     model_path = utils.prepare_models(model_dir)
     if not model_path: raise RuntimeError("No model path resolved.")
 
-    # 2. Handle Context Length (FIX for the 2048 vs 4096 error)
+    # Robust context length parsing
     env_max_len = os.environ.get("MAX_MODEL_LEN")
-    max_model_len = int(env_max_len) if env_max_len else None
+    if not env_max_len or str(env_max_len).lower() == "auto":
+        max_model_len = None # This is the "auto" behavior for the Python API
+    else:
+        try:
+            max_model_len = int(env_max_len)
+        except ValueError:
+            print(f"Warning: Could not parse MAX_MODEL_LEN '{env_max_len}' as int. Defaulting to None (auto).")
+            max_model_len = None
 
-    # 3. Setup Engine Args
+    # Enable trust_remote_code via env var
+    trust_remote_code = os.environ.get("TRUST_REMOTE_CODE", "0") == "1"
+
     engine_args = AsyncEngineArgs(
         model=model_path,
         gpu_memory_utilization=float(os.environ.get("GPU_MEMORY_UTILIZATION", "0.95")),
-        # NEW: vLLM now supports "auto" to fit context to your available VRAM
-        max_model_len=os.environ.get("MAX_MODEL_LEN", "auto"), 
+        max_model_len=max_model_len, # Must be int or None
         dtype="auto",
-        trust_remote_code=True, # Still recommended for new architectures
+        trust_remote_code=trust_remote_code,
         enforce_eager=False,
         max_num_seqs=256,
+        disable_log_stats=False
     )
 
     llm_engine = AsyncLLMEngine.from_engine_args(engine_args)
-    print("--- ✅ vLLM Engine Ready ---")
+    
+    # Correct way to log the derived context length in V1 engine
+    derived_len = llm_engine.model_config.max_model_len
+    print(f"--- ✅ vLLM Engine Ready (Context Length: {derived_len}) ---")
+    
 
 async def handler(job):
     global llm_engine
