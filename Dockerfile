@@ -18,7 +18,6 @@ RUN pip3 install --no-cache-dir runpod cryptography huggingface_hub hf_transfer
 RUN mkdir -p /models && mkdir -p /workspace
 
 # 4. Environment Variables
-# CRITICAL: This enables the Rust downloader
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 ENV MODEL_DIR=/models
 
@@ -29,6 +28,10 @@ COPY test_local.py /test_local.py
 COPY rp_handler.py /rp_handler.py
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
+
+# This clears the vllm base image's entrypoint so that 
+# we can override CMD normally.
+ENTRYPOINT []
 
 # DEFAULT CMD
 CMD ["python3", "-u", "/rp_handler.py"]
