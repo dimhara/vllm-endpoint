@@ -9,7 +9,7 @@ This project provides a simplified, encrypted interface for deploying Large Lang
 *   **🔒 End-to-End Input Encryption**: Prompts are encrypted on the client using Fernet (symmetric encryption). The server decrypts them strictly in memory. The prompt text never traverses the network in plain text.
 *   **⚡ High-Performance Inference**: Powered by vLLM (paged attention) for state-of-the-art throughput.
 *   **🌊 Token Streaming**: Supports real-time token streaming back to the client via RunPod's generator interface.
-*   **📦 Smart Caching**: Automatically handles model downloads from HuggingFace, supporting caching on RunPod Network Volumes for instant cold starts.
+*   **📦 Smart Caching**: Automatically handles model downloads from HuggingFace, supporting caching for instant cold starts.
 *   **🛠️ Argument Agnostic**: Pass standard sampling parameters (`temperature`, `top_p`, `max_tokens`) dynamically.
 
 ---
