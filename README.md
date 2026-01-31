@@ -1,111 +1,96 @@
-# vLLM Secure Worker
+# llama.cpp Secure Worker
 
-A lightweight, security-focused serverless handler for [vLLM](https://github.com/vllm-project/vllm) on RunPod.
+A high-performance, security-focused serverless worker for [llama.cpp](https://github.com/ggerganov/llama.cpp) (via `llama-cpp-python`) on RunPod.
 
-This project provides a simplified, encrypted interface for deploying Large Language Models (LLMs) like Llama 3, Mistral, and Qwen. It strips away the complexity of the official RunPod worker in favor of a direct, encrypted-input pipeline with streaming support.
+This worker is designed for **low-latency cold starts** and **privacy**. It is ideal for "the odd query" where vLLM's heavy initialization and VRAM pre-allocation would be too slow or resource-intensive.
 
-## Features
+## 🚀 Why llama.cpp for Serverless?
 
-*   **🔒 End-to-End Input Encryption**: Prompts are encrypted on the client using Fernet (symmetric encryption). The server decrypts them strictly in memory. The prompt text never traverses the network in plain text.
-*   **⚡ High-Performance Inference**: Powered by vLLM (paged attention) for state-of-the-art throughput.
-*   **🌊 Token Streaming**: Supports real-time token streaming back to the client via RunPod's generator interface.
-*   **📦 Smart Caching**: Automatically handles model downloads from HuggingFace, supporting caching for instant cold starts.
-*   **🛠️ Argument Agnostic**: Pass standard sampling parameters (`temperature`, `top_p`, `max_tokens`) dynamically.
+| Feature | vLLM | llama.cpp (This Worker) |
+| :--- | :--- | :--- |
+| **Cold Start** | 40-60s (Slow due to CUDA graphs) | **2-5s (Nearly Instant)** |
+| **VRAM Usage** | Massive (Pre-allocates cache) | **Lean (Fits to model size)** |
+| **Format** | Safetensors / Raw | **GGUF (Quantized & Optimized)** |
+| **Stability** | High throughput (Batching) | **High Reliability (Low overhead)** |
 
 ---
 
-## 1. Setup & Deployment
+## 🔒 Security Features
 
-### A. Docker Build
-Build the image locally or via GitHub Actions.
+*   **End-to-End Prompt Encryption**: Prompts are encrypted using **Fernet (AES-128)** on the client. The server decrypts them strictly in memory.
+*   **Encrypted Transport**: All communication happens over HTTPS, with the added layer of symmetric encryption for the sensitive prompt payload.
+*   **In-Memory Processing**: Prompt contexts are handled in RAM/VRAM and are not persisted to disk.
 
-```bash
-docker build -t dimhara/vllm-secure-worker:latest .
-docker push dimhara/vllm-secure-worker:latest
-```
+---
 
-### B. RunPod Configuration
-Create a Serverless Endpoint on RunPod using your Docker image. Set the following **Environment Variables**:
+## 1. Setup & Configuration
+
+### Environment Variables
 
 | Variable | Description | Example |
 | :--- | :--- | :--- |
-| `MODELS` | **Required.** Comma-separated list of HuggingFace Repo IDs. The first one is loaded by default. | `meta-llama/Meta-Llama-3-8B-Instruct` |
-| `ENCRYPTION_KEY` | **Required.** A 32-byte URL-safe base64 key. | Generate one using the snippet below. |
-| `HF_TOKEN` | Optional. Required for gated models (like Llama 3). | `hf_...` |
-| `GPU_MEMORY_UTILIZATION` | vLLM VRAM reservation (0.0 to 1.0). | `0.95` (Default) |
-| `MAX_MODEL_LEN` | Maximum context length. | `4096` (Default) |
+| `MODELS` | **Required.** Format: `repo_id:filename` | `Qwen/Qwen2.5-7B-Instruct-GGUF:qwen2.5-7b-instruct-q4_k_m.gguf` |
+| `ENCRYPTION_KEY` | **Required.** 32-byte URL-safe base64 key. | `Generate one using the command below.` |
+| `MAX_MODEL_LEN` | Context window size (tokens). | `4096` (Default: 2048) |
+| `HF_HUB_ENABLE_HF_TRANSFER` | Enables fast Rust downloads. | `1` (Highly Recommended) |
 
-#### Generating an Encryption Key
-Run this Python one-liner to generate a valid key for your environment variables and client:
-
+### Generate an Encryption Key
+You and the worker must share the same key. Generate it via:
 ```bash
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 ---
 
-## 2. Client Usage
+## 2. Deployment
 
-Use the provided `client.py` to interact with your endpoint. This script handles the encryption of your prompt before sending it.
+### Building the Image
+The Dockerfile compiles `llama-cpp-python` with **CUDA support**.
 
-### Configuration
-Edit the top of `client.py`:
-```python
-ENDPOINT_ID = "YOUR_ENDPOINT_ID"
-API_KEY = "YOUR_RUNPOD_API_KEY"
-ENCRYPTION_KEY = "YOUR_GENERATED_KEY_HERE" # Must match Server
-```
-
-### Running Inference
 ```bash
-# Basic Usage
-python client.py -p "Explain quantum computing in one sentence."
-
-# With Sampling Parameters
-python client.py \
-  -p "Write a poem about rust." \
-  --temp 0.8 \
-  --max-tokens 200
+docker build -t your-username/llama-cpp-secure-worker:latest .
+docker push your-username/llama-cpp-secure-worker:latest
 ```
 
-**How it works:**
-1. Client encrypts the prompt json payload.
-2. Encrypted blob is sent to RunPod.
-3. Server decrypts blob in memory.
-4. vLLM generates text.
-5. Tokens are streamed back to the client in real-time.
+### RunPod Settings
+*   **Container Image**: `your-username/llama-cpp-secure-worker:latest`
+*   **Docker Command**: Leave blank for Serverless, or `/start.sh` for Interactive Pod.
+*   **Container Disk**: Ensure at least 20GB for model storage.
 
 ---
 
-## 3. Local Testing
+## 3. Usage
 
-You can test the handler logic inside the Docker container (or a RunPod Interactive pod) without triggering an API call. This is useful for debugging model loading and memory issues.
-
-1. SSH into the Pod.
-2. Run the test script:
-
+### Local Testing (Within a Pod)
+To verify the engine, encryption, and streaming are working without making an external API call:
 ```bash
-# Ensure env vars are set if testing manually
-export ENCRYPTION_KEY="your_key..."
-export MODELS="facebook/opt-125m"
+# Set your model and key
+export MODELS="Qwen/Qwen2.5-0.5B-Instruct-GGUF:qwen2.5-0.5b-instruct-q4_k_m.gguf"
+export ENCRYPTION_KEY="your-key-here"
 
-# Run test
-python3 test_local.py --prompt "To be or not to be,"
+# Run the test
+python3 test_local.py --prompt "Explain the benefits of GGUF models."
+```
+
+### Remote Client
+Update `client.py` with your `ENDPOINT_ID`, `API_KEY`, and `ENCRYPTION_KEY`.
+```bash
+python client.py -p "What is the capital of France?"
 ```
 
 ---
 
-## 4. Directory Structure
+## 4. Performance Tips
 
-*   **`Dockerfile`**: Based on `vllm/vllm-openai`, adds security/handler logic.
-*   **`rp_handler.py`**: The entry point. Initializes the AsyncLLMEngine, handles decryption, and yields streaming responses.
-*   **`utils.py`**: Handles downloading full model snapshots from HuggingFace to `/models`.
-*   **`client.py`**: Reference client implementation.
-*   **`start.sh`**: Startup script for interactive debugging (keeps container alive).
+1.  **Use RunPod Cached Models**: In the RunPod Endpoint settings, set the **Model** field to the Hugging Face repo ID (e.g., `Qwen/Qwen2.5-7B-Instruct-GGUF`). This will mount the model cache to `/runpod-volume/`, allowing the worker to skip the download step almost entirely.
+2.  **Quantization**: Use `Q4_K_M` or `Q5_K_M` GGUF files for the best balance of speed and intelligence.
+3.  **VRAM Offloading**: This worker is configured to offload **all layers** (`n_gpu_layers=-1`) to the GPU by default for maximum speed.
 
-## 5. Security Notes
+---
 
-*   **Input**: Heavily secured. The prompt is opaque to the RunPod proxy and network intermediaries.
-*   **Output**: Streamed back via standard HTTPS. While HTTPS is secure, the response body is not double-encrypted by Fernet in this version to maintain streaming performance.
-*   **Storage**: Models are cached to disk, but prompts and generation contexts are held strictly in VRAM/RAM during the request lifecycle.
-
+## 🛠️ Project Structure
+*   `rp_handler.py`: Entry point for RunPod. Handles the async streaming loop.
+*   `utils.py`: Fast model downloader using `hf_transfer`.
+*   `client.py`: Client-side encryption and stream consumer.
+*   `test_local.py`: Local verification script.
+*   `Dockerfile`: Optimized for NVIDIA CUDA 12.1.

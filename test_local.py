@@ -1,46 +1,43 @@
 import os
-import asyncio
 import json
 import argparse
 from cryptography.fernet import Fernet
 
-# MOCK ENV
-os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
-# Ensure MODELS is set or models exist in /models
-os.environ["GPU_MEMORY_UTILIZATION"] = "0.90"
+# Setup local env keys
+if "ENCRYPTION_KEY" not in os.environ:
+    os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
-try:
-    from rp_handler import handler, init_engine
-except ImportError:
-    print("Error: Could not find rp_handler.py")
-    exit(1)
+# Use models folder
+if "MODELS" not in os.environ:
+    # Small default for testing
+    os.environ["MODELS"] = "Qwen/Qwen2.5-0.5B-Instruct-GGUF:qwen2.5-0.5b-instruct-q4_k_m.gguf"
 
-async def run_test(prompt):
-    # 1. Initialize (Cold Start)
-    await init_engine()
+from rp_handler import handler
 
-    # 2. Encrypt
+def run_test(prompt):
+    print(f"--- 🛠️  Local Test (Key: {os.environ['ENCRYPTION_KEY']}) ---")
+    
+    # 1. Encrypt
     f = Fernet(os.environ["ENCRYPTION_KEY"].encode())
-    payload = {"prompt": prompt, "sampling_params": {"max_tokens": 50}}
+    payload = {"prompt": prompt, "sampling_params": {"max_tokens": 100}}
     encrypted = f.encrypt(json.dumps(payload).encode()).decode()
 
-    # 3. Create Job
+    # 2. Mock Job
     job = {"input": {"encrypted_input": encrypted}}
 
-    print(f"\n--- Streaming Response for: '{prompt}' ---\n")
+    print(f"Prompt: {prompt}")
+    print("Response: ", end="")
     
-    # 4. Consume Generator
-    async for chunk in handler(job):
+    # 3. Run Handler
+    for chunk in handler(job):
         if isinstance(chunk, dict) and "error" in chunk:
-            print(f"\nERROR: {chunk['error']}")
+            print(f"\n[ERROR] {chunk['error']}")
         else:
             print(chunk, end="", flush=True)
-    
-    print("\n\n--- Finished ---")
+    print("\n--- Test Complete ---")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--prompt", default="To be or not to be,")
+    parser.add_argument("--prompt", default="Explain the benefit of llama.cpp vs vllm.")
     args = parser.parse_args()
-    
-    asyncio.run(run_test(args.prompt))
+    run_test(args.prompt)

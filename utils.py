@@ -1,64 +1,42 @@
 import os
 import sys
+from huggingface_hub import hf_hub_download
 
-# CRITICAL: Set this BEFORE importing huggingface_hub to ensure it picks up the Rust downloader
-if "HF_HUB_ENABLE_HF_TRANSFER" not in os.environ:
-    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-
-from huggingface_hub import snapshot_download, constants
-
-# Defined in RunPod docs
-RUNPOD_CACHE_DIR = "/runpod-volume/huggingface-cache/hub"
-
-def get_model_map():
-    """
-    Parses the MODELS environment variable.
-    Format: repo_id,repo_id
-    """
-    models_env = os.environ.get("MODELS", "")
-    if not models_env:
-        return []
-    return [entry.strip() for entry in models_env.split(",") if entry.strip()]
-
-def resolve_model(repo_id, download_dir):
-    """
-    Downloads the full model snapshot using hf_transfer (Rust).
-    """
-    print(f"[Download] Checking/Downloading {repo_id} to {download_dir}...")
-    
-    try:
-        # snapshot_download automatically uses hf_transfer if the env var is set
-        # and the package is installed.
-        path = snapshot_download(
-            repo_id=repo_id,
-            cache_dir=download_dir,
-            ignore_patterns=["*.msgpack", "*.h5", "*.ot", "*.tflite"], # Optimization: Skip non-vLLM weights
-            local_dir_use_symlinks=True # Optimization: Use symlinks if possible to save space
-        )
-        print(f"[Ready] Model available at: {path}")
-        return path
-    except Exception as e:
-        print(f"Error downloading {repo_id}: {e}")
-        raise e
+# Enable fast Rust-based downloader
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 def prepare_models(target_dir):
     """
-    Iterates through env vars and ensures all models are ready.
+    Expects MODELS env in format 'repo_id:filename'
+    Example: 'Qwen/Qwen2.5-7B-Instruct-GGUF:qwen2.5-7b-instruct-q4_k_m.gguf'
     """
+    model_env = os.environ.get("MODELS", "")
+    
+    if not model_env:
+        print("❌ Error: MODELS environment variable is empty.")
+        sys.exit(1)
+        
+    if ":" not in model_env:
+        print("❌ Error: MODELS must be in format 'repo_id:filename'")
+        sys.exit(1)
+    
+    repo_id, filename = model_env.split(":", 1)
+    
     if not os.path.exists(target_dir):
         os.makedirs(target_dir)
 
-    model_list = get_model_map()
-    first_model_path = None
-
-    print(f"--- Resolving {len(model_list)} models (HF_TRANSFER={'Enabled' if os.environ.get('HF_HUB_ENABLE_HF_TRANSFER') == '1' else 'Disabled'}) ---")
-
-    for i, repo_id in enumerate(model_list):
-        path = resolve_model(repo_id, target_dir)
-        if i == 0:
-            first_model_path = path
-        
-    return first_model_path
+    print(f"--- 📥 Downloading GGUF: {filename} from {repo_id} ---")
+    
+    # hf_hub_download will check the cache directory first automatically
+    path = hf_hub_download(
+        repo_id=repo_id,
+        filename=filename,
+        local_dir=target_dir,
+        local_dir_use_symlinks=False
+    )
+    
+    print(f"--- ✅ Model ready at: {path} ---")
+    return path
 
 if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "/models"
