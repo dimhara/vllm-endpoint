@@ -4,9 +4,8 @@ import json
 import sys
 from cryptography.fernet import Fernet
 
-# CONFIG - Set these!
 ENDPOINT_ID = "YOUR_ID"
-API_KEY = "YOUR_KEY"
+API_KEY = "YOUR_API_KEY"
 URL = f"https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync"
 ENCRYPTION_KEY = "YOUR_KEY"
 
@@ -16,7 +15,16 @@ def main():
     args = parser.parse_args()
 
     f = Fernet(ENCRYPTION_KEY.encode())
-    payload = {"prompt": args.prompt, "sampling_params": {"max_tokens": 500}}
+    
+    # Modern OpenAI Message Payload
+    payload = {
+        "messages": [
+            {"role": "system", "content": "You are a helpful, private assistant."},
+            {"role": "user", "content": args.prompt}
+        ],
+        "sampling_params": {"max_tokens": 512, "temperature": 0.2}
+    }
+    
     encrypted_blob = f.encrypt(json.dumps(payload).encode()).decode()
 
     headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -27,7 +35,7 @@ def main():
         stream=True
     )
 
-    print("-" * 20)
+    print("Response: ", end="")
     for line in response.iter_lines():
         if line:
             try:
@@ -35,9 +43,8 @@ def main():
                 if 'output' in data:
                     sys.stdout.write(data['output'])
                     sys.stdout.flush()
-            except:
-                pass
-    print("\n" + "-" * 20)
+            except: pass
+    print("\n")
 
 if __name__ == "__main__":
     main()

@@ -1,26 +1,18 @@
 #!/bin/bash
 
-# Enable fast download transfer
+# Enable fast download
 export HF_HUB_ENABLE_HF_TRANSFER=1
 MODEL_DIR="/models"
-
 mkdir -p $MODEL_DIR
 
-echo "---------------------------------------------------"
-echo "Initializing Models from Environment Variable..."
-echo "MODELS: $MODELS"
-echo "---------------------------------------------------"
-
-# Use the shared utils script to download
+echo "--- Preparing Model ---"
 python3 /utils.py "$MODEL_DIR"
 
-echo "---------------------------------------------------"
-echo "Models ready in $MODEL_DIR"
-echo "---------------------------------------------------"
-echo "You can now start the handler manually for testing:"
-echo "python3 rp_handler.py"
-echo "---------------------------------------------------"
-
-# Keep container running
-sleep infinity
-
+if [ "$RUN_MODE" = "OPENAI_SERVER" ]; then
+    echo "--- LaunchING Standard OpenAI API Server (Unencrypted) ---"
+    # Note: Use this only in Full Pod mode. This does NOT support your custom encryption.
+    python3 -m llama_cpp.server --model "$MODEL_DIR"/*.gguf --host 0.0.0.0 --port 8000 --n_gpu_layers -1 --chat_format auto
+else
+    echo "--- Launching Secure RunPod Worker ---"
+    python3 -u /rp_handler.py
+fi

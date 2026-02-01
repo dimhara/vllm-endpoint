@@ -1,25 +1,33 @@
 # llama.cpp Secure Worker
 
-A high-performance, security-focused serverless worker for [llama.cpp](https://github.com/ggerganov/llama.cpp) (via `llama-cpp-python`) on RunPod.
+A high-performance, security-focused serverless worker for [llama.cpp](https://github.com/ggerganov/llama.cpp) (via `llama-cpp-python`) optimized for RunPod.
 
-This worker is designed for **low-latency cold starts** and **privacy**. It is ideal for "the odd query" where vLLM's heavy initialization and VRAM pre-allocation would be too slow or resource-intensive.
+This worker provides **low-latency cold starts** and **strict privacy**. It is designed for "the odd query" where vLLM's heavy initialization and massive VRAM pre-allocation are overkill.
 
-## 🚀 Why llama.cpp for Serverless?
-
-| Feature | vLLM | llama.cpp (This Worker) |
-| :--- | :--- | :--- |
-| **Cold Start** | 40-60s (Slow due to CUDA graphs) | **2-5s (Nearly Instant)** |
-| **VRAM Usage** | Massive (Pre-allocates cache) | **Lean (Fits to model size)** |
-| **Format** | Safetensors / Raw | **GGUF (Quantized & Optimized)** |
-| **Stability** | High throughput (Batching) | **High Reliability (Low overhead)** |
+## 🚀 Features
+*   **Flash Attention**: Enabled by default for massive speed boosts on Ampere+ GPUs (A10, A100, RTX 30/40).
+*   **Native Jinja2 Templates**: Automatically uses the official chat template embedded in the GGUF file (supports Llama 3.x, Qwen 2.5, DeepSeek R1, etc.).
+*   **OpenAI Schema**: Fully supports the `messages` array (System/User/Assistant) natively.
+*   **Dual Mode**: Switch between a Secure Serverless Worker and a standard OpenAI-compatible API server.
 
 ---
 
-## 🔒 Security Features
+## 🔒 Security & Privacy Model
 
-*   **End-to-End Prompt Encryption**: Prompts are encrypted using **Fernet (AES-128)** on the client. The server decrypts them strictly in memory.
-*   **Encrypted Transport**: All communication happens over HTTPS, with the added layer of symmetric encryption for the sensitive prompt payload.
-*   **In-Memory Processing**: Prompt contexts are handled in RAM/VRAM and are not persisted to disk.
+*   **End-to-End Prompt Encryption**: Payloads (prompts, history, and images) are encrypted via **Fernet (AES-128)** on the client. The worker decrypts them strictly in RAM.
+*   **Zero-Disk Footprint**: 
+    - Prompts and multimodal data are never written to `/tmp` or persistent storage.
+    - Model contexts are wiped upon Serverless instance termination.
+*   **Encrypted Transport**: Layered protection using HTTPS + symmetric payload encryption.
+
+---
+
+## 🛠️ Operating Modes
+
+| Mode | Environment Variable | Use Case |
+| :--- | :--- | :--- |
+| **Secure Worker** | `RUN_MODE=SECURE_WORKER` (Default) | **Serverless.** Cold starts in < 3s. Requires Fernet decryption by the client. |
+| **OpenAI Server** | `RUN_MODE=OPENAI_SERVER` | **Full Pod.** Connect directly to third-party tools (SillyTavern, etc.) on port 8000. |
 
 ---
 
@@ -29,13 +37,12 @@ This worker is designed for **low-latency cold starts** and **privacy**. It is i
 
 | Variable | Description | Example |
 | :--- | :--- | :--- |
-| `MODELS` | **Required.** Format: `repo_id:filename` | `Qwen/Qwen2.5-7B-Instruct-GGUF:qwen2.5-7b-instruct-q4_k_m.gguf` |
-| `ENCRYPTION_KEY` | **Required.** 32-byte URL-safe base64 key. | `Generate one using the command below.` |
-| `MAX_MODEL_LEN` | Context window size (tokens). | `4096` (Default: 2048) |
-| `HF_HUB_ENABLE_HF_TRANSFER` | Enables fast Rust downloads. | `1` (Highly Recommended) |
+| `MODELS` | **Required.** Format: `repo_id:filename` | `unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF:DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf` |
+| `ENCRYPTION_KEY` | **Required for Secure Worker.** | Generate using the snippet below. |
+| `MAX_MODEL_LEN` | Context window size (tokens). | `4096` (Default: 4096) |
+| `RUN_MODE` | Switch between `SECURE_WORKER` and `OPENAI_SERVER`. | `SECURE_WORKER` |
 
-### Generate an Encryption Key
-You and the worker must share the same key. Generate it via:
+### Generate your Encryption Key
 ```bash
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
@@ -45,7 +52,7 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 ## 2. Deployment
 
 ### Building the Image
-The Dockerfile compiles `llama-cpp-python` with **CUDA support**.
+The Dockerfile uses **CUDA 12.4** and compiles `llama-cpp-python` with **Flash Attention** support.
 
 ```bash
 docker build -t your-username/llama-cpp-secure-worker:latest .
@@ -54,43 +61,41 @@ docker push your-username/llama-cpp-secure-worker:latest
 
 ### RunPod Settings
 *   **Container Image**: `your-username/llama-cpp-secure-worker:latest`
-*   **Docker Command**: Leave blank for Serverless, or `/start.sh` for Interactive Pod.
-*   **Container Disk**: Ensure at least 20GB for model storage.
+*   **Container Disk**: 20GB+ (depending on model size).
+*   **GPU**: Requires NVIDIA GPU. Ampere or newer recommended for Flash Attention.
 
 ---
 
 ## 3. Usage
 
 ### Local Testing (Within a Pod)
-To verify the engine, encryption, and streaming are working without making an external API call:
+To verify the engine, encryption, and Jinja templates are working:
 ```bash
-# Set your model and key
 export MODELS="Qwen/Qwen2.5-0.5B-Instruct-GGUF:qwen2.5-0.5b-instruct-q4_k_m.gguf"
 export ENCRYPTION_KEY="your-key-here"
 
-# Run the test
-python3 test_local.py --prompt "Explain the benefits of GGUF models."
+python3 test_local.py --prompt "Why is llama.cpp faster for cold starts than vLLM?"
 ```
 
-### Remote Client
+### Secure Remote Client
 Update `client.py` with your `ENDPOINT_ID`, `API_KEY`, and `ENCRYPTION_KEY`.
 ```bash
-python client.py -p "What is the capital of France?"
+python client.py -p "Compare GGUF vs Safetensors."
 ```
 
 ---
 
-## 4. Performance Tips
+## ⚡ Performance Tips
 
-1.  **Use RunPod Cached Models**: In the RunPod Endpoint settings, set the **Model** field to the Hugging Face repo ID (e.g., `Qwen/Qwen2.5-7B-Instruct-GGUF`). This will mount the model cache to `/runpod-volume/`, allowing the worker to skip the download step almost entirely.
-2.  **Quantization**: Use `Q4_K_M` or `Q5_K_M` GGUF files for the best balance of speed and intelligence.
-3.  **VRAM Offloading**: This worker is configured to offload **all layers** (`n_gpu_layers=-1`) to the GPU by default for maximum speed.
+1.  **GGUF Quantization**: Use `Q4_K_M` or `IQ4_XS` for the best balance of speed and intelligence.
+2.  **RunPod Volume**: In RunPod Endpoint settings, set the **Model** field to the Hugging Face repo ID. This mounts the model cache to `/runpod-volume/`, skipping the download step for future cold starts.
+3.  **VRAM Offloading**: The worker is pre-configured with `n_gpu_layers=-1` to offload the entire model to the GPU for maximum speed.
 
 ---
 
 ## 🛠️ Project Structure
-*   `rp_handler.py`: Entry point for RunPod. Handles the async streaming loop.
+*   `rp_handler.py`: RunPod entry point. Decrypts input in RAM and uses `create_chat_completion`.
 *   `utils.py`: Fast model downloader using `hf_transfer`.
-*   `client.py`: Client-side encryption and stream consumer.
-*   `test_local.py`: Local verification script.
-*   `Dockerfile`: Optimized for NVIDIA CUDA 12.1.
+*   `client.py`: Reference client implementing Fernet encryption and OpenAI schema.
+*   `start.sh`: Mode-switcher (Secure Worker vs OpenAI Server).
+*   `Dockerfile`: Optimized for NVIDIA CUDA 12.4 + Flash Attention.
