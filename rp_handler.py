@@ -19,36 +19,41 @@ def init_engine():
     print("--- 🚀 Initializing llama.cpp Secure Worker ---")
     
     model_dir = os.environ.get("MODEL_DIR", "/models")
-    requested_format = os.environ.get("CHAT_FORMAT") # Can be None for auto-detect
+    # Keep auto-detect by defaulting to None if env var is empty
+    requested_format = os.environ.get("CHAT_FORMAT") 
+    if not requested_format:
+        requested_format = None
 
     try:
-        # 1. Download/Verify Model
         model_path = utils.prepare_models(model_dir)
-
-        # 2. Set Context Size
         max_ctx = int(os.environ.get("MAX_MODEL_LEN", 4096))
 
-        # 3. Load Engine
         llm = Llama(
             model_path=model_path,
             n_gpu_layers=-1, 
             n_ctx=max_ctx,
             flash_attn=ENABLE_FLASH_ATTN,
-            chat_format=requested_format,
+            chat_format=requested_format, # Passing None triggers auto-detection
             verbose=False
         )
 
-        # 4. Extract and Log Metadata (Non-Sensitive)
-        # We query the resolved chat_format to see what the engine actually picked
-        resolved_format = llm.chat_format
+        # --- FIXED LOGGING SECTION ---
+        # 1. Safely handle n_ctx (Method vs Property check)
+        try:
+            ctx_val = llm.n_ctx() if callable(llm.n_ctx) else llm.n_ctx
+        except:
+            ctx_val = "Unknown"
+
+        # 2. Get the actual name of the chat handler being used
+        # If requested_format was None, this shows what the engine actually selected
+        actual_format = llm.chat_format if hasattr(llm, 'chat_format') else "Unknown"
         
         print(f"--- 🛠️  Model Metadata & Config ---")
-        print(f"   - Model File:    {os.path.basename(model_path)}")
-        print(f"   - Context Window: {llm.n_ctx} tokens")
-        print(f"   - Chat Format:    {resolved_format}")
-        print(f"   - Flash Attn:     {'ENABLED' if ENABLE_FLASH_ATTN else 'DISABLED'}")
-        print(f"   - GPU Offload:    ALL LAYERS (-1)")
-        print(f"--- ✅ Engine Ready ---")
+        print(f"   - Model File:     {os.path.basename(model_path)}")
+        print(f"   - Context Window:  {ctx_val} tokens")
+        print(f"   - Chat Format:     {actual_format}")
+        print(f"   - Flash Attn:      {'ENABLED' if ENABLE_FLASH_ATTN else 'DISABLED'}")
+        print(f"--- ✅ Engine Ready (RAM-only Decryption Active) ---")
 
     except Exception as e:
         print(f"--- ❌ Engine Initialization Failed ---")
@@ -56,7 +61,6 @@ def init_engine():
         raise e
 
 def handler(job):
-    # 1. DECRYPT & PARSE
     try:
         if not ENCRYPTION_KEY:
             yield {"error": "Server ENCRYPTION_KEY missing."}
@@ -76,15 +80,14 @@ def handler(job):
         yield {"error": f"Decryption/Parsing failed: {str(e)}"}
         return
 
-    # 2. PREPARE REQUEST
     messages = request_data.get("messages", [])
     if not messages and "prompt" in request_data:
         messages = [{"role": "user", "content": request_data["prompt"]}]
 
     params = request_data.get("sampling_params", {})
 
-    # 3. GENERATE & STREAM
     try:
+        # Generate stream
         stream = llm.create_chat_completion(
             messages=messages,
             max_tokens=params.get("max_tokens", 512),
@@ -100,16 +103,15 @@ def handler(job):
                     yield delta['content']
 
     except Exception as e:
+        print(f"Inference failed: {e}")
         yield {"error": f"Inference failed: {str(e)}"}
 
 # Trigger eager load
 try:
     init_engine()
 except:
-    print("--- 💀 FATAL: Initialization failed. Exiting. ---")
-    exit(1)
+    import sys
+    sys.exit(1)
 
 if __name__ == "__main__":
-    print("--- 🟢 Starting RunPod Serverless Loop ---")
     runpod.serverless.start({"handler": handler, "return_aggregate_stream": True})
-    
