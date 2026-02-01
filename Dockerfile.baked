@@ -1,0 +1,20 @@
+# 1. Start from your previously built logic image
+FROM ghcr.io/dimhara/llamacpp-endpoint:latest
+
+# 2. Define the model to bake in at build time
+# RunPod allows passing build arguments, or you can hardcode it here.
+ARG BAKE_MODELS="unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF:DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf"
+ENV MODELS=$BAKE_MODELS
+
+# 3. Use the existing utils.py to download the model into the image layer
+# We enable hf_transfer for maximum speed during the build.
+# We also clean up the Hugging Face cache folder immediately after to keep 
+# the image size from doubling (only the file in /models will remain).
+RUN HF_HUB_ENABLE_HF_TRANSFER=1 python3 /app/utils.py /models && \
+    rm -rf /root/.cache/huggingface
+
+# 4. Set the internal model directory
+ENV MODEL_DIR=/models
+
+# 5. The CMD is inherited from the base image, 
+# so it will automatically run start.sh & rp_handler.py
