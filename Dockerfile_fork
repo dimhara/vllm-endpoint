@@ -27,6 +27,14 @@ RUN pip3 install --no-cache-dir runpod cryptography requests huggingface_hub hf_
 # 2. Copy the compiled binary
 COPY --from=builder /llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
 
+# 3. Copy ALL required Shared Libraries
+COPY --from=builder /llama.cpp/build/bin/*.so /usr/local/lib/
+
+# 3. Tell Linux where to find them
+ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
+
+
+
 # 3. Setup App
 WORKDIR /app
 COPY . .
