@@ -12,6 +12,18 @@ ENABLE_FLASH_ATTN = os.environ.get("ENABLE_FLASH_ATTN", "false").lower() == "tru
 
 llm = None
 
+def get_smart_format(model_path):
+    """
+    Map common models to specialized handlers if 'jinja' fails.
+    """
+    m_lower = model_path.lower()
+    if "qwen" in m_lower or "deepseek" in m_lower:
+        return "qwen"
+    if "llama-3" in m_lower:
+        return "llama-3"
+    if "gemma" in m_lower:
+        return "gemma"
+    return None # Let the library choose its default architecture match
 
 def init_engine():
     global llm
@@ -20,12 +32,15 @@ def init_engine():
     print("--- 🚀 Initializing llama.cpp Secure Worker ---")
     model_dir = os.environ.get("MODEL_DIR", "/models")
     
-    # CHANGE: Default to "jinja" instead of None. 
-    # "jinja" forces the engine to use the template found inside the GGUF file.
-    requested_format = os.environ.get("CHAT_FORMAT", "jinja") 
-
     try:
         model_path = utils.prepare_models(model_dir)
+        
+        # 1. Start with the most generic/native option (None)
+        # This lets the library pick its best match based on architecture
+        requested_format = os.environ.get("CHAT_FORMAT")
+        if not requested_format:
+            requested_format = get_smart_format(model_path)
+            
         max_ctx = int(os.environ.get("MAX_MODEL_LEN", 4096))
 
         llm = Llama(
@@ -33,13 +48,11 @@ def init_engine():
             n_gpu_layers=-1, 
             n_ctx=max_ctx,
             flash_attn=ENABLE_FLASH_ATTN,
-            chat_format=requested_format, # This will now use the embedded Jinja
+            chat_format=requested_format,
             verbose=False
         )
 
         ctx_val = llm.n_ctx() if callable(llm.n_ctx) else llm.n_ctx
-        
-        # This will now likely show 'jinja' or the resolved name
         print(f"--- 🛠️  Model Metadata & Config ---")
         print(f"   - Model File:     {os.path.basename(model_path)}")
         print(f"   - Context Window:  {ctx_val} tokens")
@@ -48,20 +61,12 @@ def init_engine():
         print(f"--- ✅ Engine Ready (RAM-only Decryption Active) ---")
 
     except Exception as e:
-        print(f"--- ❌ Engine Initialization Failed: {e}")
-        # Fallback logic: If 'jinja' fails (old models), try None (default)
-        if requested_format == "jinja":
-            print("--- ⚠️  Jinja template failed, retrying with default... ---")
-            os.environ["CHAT_FORMAT"] = "" # Clear it for the next attempt or logic
+        print(f"--- ❌ Engine Initialization Failed ---")
         traceback.print_exc()
         raise e
 
 def handler(job):
     try:
-        if not ENCRYPTION_KEY:
-            yield {"error": "Server ENCRYPTION_KEY missing."}
-            return
-            
         f = Fernet(ENCRYPTION_KEY.encode())
         input_payload = job.get('input', {})
         encrypted_input = input_payload.get('encrypted_input')
@@ -76,6 +81,17 @@ def handler(job):
     params = request_data.get("sampling_params", {})
 
     try:
+        # --- PROMPT VALIDATION ---
+        # We manually test the chat template here.
+        # If it returns an empty string or errors, the template logic is broken.
+        try:
+            test_prompt = llm.create_chat_completion(messages=messages, max_tokens=1)
+            # Log the prompt for the FIRST request only to help debug without flooding
+            print(f"--- 📝 Internal Prompt Probe Successful (Format: {llm.chat_format}) ---")
+        except Exception as e:
+            print(f"--- ⚠️  Template Probe Failed: {e}. Output may be empty. ---")
+
+        # --- GENERATE ---
         stream = llm.create_chat_completion(
             messages=messages,
             max_tokens=params.get("max_tokens", 1024),
@@ -83,19 +99,23 @@ def handler(job):
             stream=True
         )
 
+        token_count = 0
         for chunk in stream:
             if 'choices' in chunk and len(chunk['choices']) > 0:
                 delta = chunk['choices'][0]['delta']
                 
-                # Check for content or reasoning
+                # Capture standard content OR DeepSeek reasoning
                 token = delta.get('content') or delta.get('reasoning_content')
                 
                 if token:
-                    # Ensure we only yield strings, never lists
-                    if isinstance(token, list):
-                        yield "".join(token)
-                    else:
-                        yield str(token)
+                    token_count += 1
+                    yield str(token)
+        
+        if token_count == 0:
+             print("--- ❌ CRITICAL: 0 tokens generated. Architecture mismatch detected. ---")
+             yield {"error": "The model produced no output. This is likely due to an incompatible 'jinja' chat template. Please try setting CHAT_FORMAT=llama-3 or qwen manually."}
+        else:
+             print(f"--- ✨ Finished (Total: {token_count} tokens) ---")
 
     except Exception as e:
         yield {"error": f"Inference failed: {str(e)}"}
